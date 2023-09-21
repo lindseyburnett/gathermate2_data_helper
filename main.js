@@ -1,16 +1,40 @@
-const fs = require("fs"); // Import the fs module
+const { promisify } = require("util");
 
-const NODE_ID = 1113;
+const fs = require("fs");
+const path = require("path");
 
-// Read the JSON file
-fs.readFile("g_mapperData.json", "utf8", (err, data) => {
-  if (err) {
-    console.error("Error reading the file:", err);
-    return;
+const readdir = promisify(require("fs").readdir);
+const readFile = promisify(require("fs").readFile);
+
+const directoryPath = "g_mapperData"; // Specify the directory path
+
+async function loadAllTheTables() {
+  const luaTables = []; // Initialize an array to store the Lua tables
+
+  let files = await readdir(directoryPath);
+
+  const jsonFiles = files;
+
+  for (let jsonFile of jsonFiles) {
+    const filePath = path.join(directoryPath, jsonFile);
+
+    let data = await readFile(filePath);
+
+    let luaTable = JSON.parse(data);
+
+    for (const property in luaTable) {
+      luaTable[property][0].nodeId = jsonFile.substring(0, 4);
+    }
+
+    luaTables.push(luaTable);
   }
 
-  // Parse the JSON data
-  const g_mapperData = JSON.parse(data);
+  return luaTables;
+}
+
+const GatherMateData2FishDB = {};
+loadAllTheTables().then((luaTables) => {
+  let g_mapperData = mergeNodeTypes(luaTables);
 
   const myformat = new Intl.NumberFormat("en-US", {
     minimumIntegerDigits: 2,
@@ -24,30 +48,41 @@ fs.readFile("g_mapperData.json", "utf8", (err, data) => {
     return `${pointX}${pointY}00`;
   };
 
-  const GatherMateData2FishDB = {};
-
   for (const key in g_mapperData) {
-    const zones = g_mapperData[key];
+    const zone = g_mapperData[key];
 
-    for (const zone of zones) {
-      const coordinates = zone.coords;
+    GatherMateData2FishDB[key] = {};
 
-      const transformedObject = {};
-      coordinates.forEach((coord) => {
+    for (const property of zone) {
+      const coordString = {};
+
+      property["coords"].forEach((coord) => {
         const formatted = formatCoordinate(coord);
-
-        transformedObject[formatted] = NODE_ID;
+        coordString[formatted] = property.nodeId;
       });
 
-      GatherMateData2FishDB[zone["uiMapId"]] = transformedObject;
+      GatherMateData2FishDB[key][property.uiMapId] = {
+        ...GatherMateData2FishDB[key][property.uiMapId],
+        ...coordString,
+      };
     }
   }
 
-  // Define the file path where you want to save the Lua data
-  const filePath = `output-${NODE_ID}.lua`;
+  const filePath = `FishData.lua`;
 
-  // Write the Lua data to the file
-  fs.writeFile(filePath, jsonToLua(GatherMateData2FishDB), "utf8", (err) => {
+  let luaTableString = "{\n";
+  for (const key in GatherMateData2FishDB) {
+    for (const subkey in GatherMateData2FishDB[key]) {
+      luaTableString += `    [${subkey}] = {\n`;
+      for (const subsubkey in GatherMateData2FishDB[key][subkey]) {
+        luaTableString += `      [${subsubkey}] = ${GatherMateData2FishDB[key][subkey][subsubkey]},\n`;
+      }
+      luaTableString += "    },\n";
+    }
+  }
+  luaTableString += "}";
+
+  fs.writeFile(filePath, luaTableString, "utf8", (err) => {
     if (err) {
       console.error("Error writing to file:", err);
       return;
@@ -56,29 +91,24 @@ fs.readFile("g_mapperData.json", "utf8", (err, data) => {
   });
 });
 
-function jsonToLua(obj) {
-  try {
-    function convertToLuaTable(obj) {
-      let luaTable = "{\n";
-      for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-          let value = obj[key];
-          if (typeof value === "object") {
-            value = convertToLuaTable(value);
-          } else if (typeof value === "string") {
-            value = `"${value}"`;
-          }
-          luaTable += `  ${key} = ${value},\n`;
+function mergeNodeTypes(nodeTypes) {
+  const mergedNodeTypes = {};
+
+  nodeTypes.forEach((nodeType) => {
+    for (const key in nodeType) {
+      if (nodeType.hasOwnProperty(key)) {
+        if (mergedNodeTypes[key]) {
+          // If the key exists in both mergedNodeTypes and nodeType, concatenate the arrays
+          mergedNodeTypes[key] = [...mergedNodeTypes[key], ...nodeType[key]];
+        } else {
+          // If the key only exists in nodeType, copy it as is
+          mergedNodeTypes[key] = nodeType[key];
         }
       }
-      luaTable += "}";
-      return luaTable;
     }
+  });
 
-    const luaTableString = convertToLuaTable(obj);
-    return luaTableString;
-  } catch (error) {
-    console.error("Error parsing JSON:", error);
-    return null;
-  }
+  // console.log(mergedNodeTypes)
+
+  return mergedNodeTypes;
 }
