@@ -6,4 +6,5 @@
 
 
 TODO
-- [ ] Configurable names for the output file 
+- [ ] Configurable names for the output file
+- [ ] Tampermonkey script needs to account for being on wowhead pages that don't have the mapper element
